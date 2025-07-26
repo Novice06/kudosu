@@ -16,7 +16,7 @@ const MAX_SOLVED_PER_SESSION = 1000;
 const GAME_URL = "https://sudoku.lumitelburundi.com/game";
 const BASE_URL = "https://sudoku.lumitelburundi.com";
 const BOT_ID = "SUPERIOR";
-const OTHER_BOT_URL = process.env.OTHER_BOT_URL || "http://localhost:3001"; // URL du bot inférieur
+const OTHER_BOT_URL = "https://inf-test.onrender.com"; // URL du bot inférieur
 
 // Variables d'état
 let currentBrowser = null;
