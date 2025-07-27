@@ -26,9 +26,15 @@ let phoneNumber = '';
 let otpCode = '';
 let isProcessing = false;
 let solvedCount = 0;
+
+// Variables d'état - MODIFIÉES
+let myStatus = {
+    isProcessing: false,    // Si je suis en train de travailler
+    hasFinished: false      // Si j'ai fini MA partie du Sudoku
+};
+
 let partnerStatus = {
-    isProcessing: false,
-    hasFinished: false
+    hasFinished: false      // Si le partenaire a fini SA partie
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -56,14 +62,7 @@ app.get("/status", (req, res) => {
         hasPage: !!currentPage,
         solvedCount,
         maxPerSession: MAX_SOLVED_PER_SESSION,
-        hasFinished: partnerStatus.hasFinished
-    });
-});
-
-app.get("/partner-status", (req, res) => {
-    res.json({
-        isProcessing,
-        hasFinished: partnerStatus.hasFinished
+        hasFinished: myStatus.hasFinished
     });
 });
 
@@ -77,7 +76,8 @@ app.post("/start-sudoku", async (req, res) => {
 
     try {
         isProcessing = true;
-        partnerStatus.hasFinished = false;
+        myStatus.isProcessing = true;
+        myStatus.hasFinished = false;
         solvedCount = 0;
         console.log("🚀 Démarrage du solveur Sudoku (Bot 2 - Bottom Half)...");
         
@@ -151,8 +151,16 @@ app.post("/submit-otp", async (req, res) => {
     });
 });
 
+// Routes MODIFIÉES
+app.get("/partner-status", (req, res) => {
+    res.json({
+        isProcessing: myStatus.isProcessing,
+        hasFinished: myStatus.hasFinished
+    });
+});
+
 app.post("/notify-finished", (req, res) => {
-    partnerStatus.hasFinished = req.body.finished;
+    partnerStatus.hasFinished = req.body.finished; // On met à jour le statut du partenaire
     res.json({ success: true });
 });
 
@@ -244,7 +252,7 @@ async function waitForPartner() {
                 console.log("✅ Partenaire a terminé sa partie");
                 return true;
             }
-            await sleep(3000);
+            await sleep(1000);
         } catch (error) {
             console.log("Erreur de vérification du partenaire, nouvelle tentative dans 5 secondes...");
             await sleep(5000);
@@ -508,11 +516,11 @@ async function solveOneSudoku(roundNumber) {
     console.log(`${'='.repeat(50)}`);
     
     try {
+        myStatus.isProcessing = true;
+        myStatus.hasFinished = false;
+
         console.log("Étape 1: Chargement de la grille");
         await currentPage.bringToFront();
-
-        await currentPage.reload({ waitUntil: "networkidle2" });
-        await sleep(3000);
         
         let gridValues = await getSudokuGrid();
         if (!gridValues) {
@@ -536,37 +544,30 @@ async function solveOneSudoku(roundNumber) {
         
         const solvedValues = convertTo1D(board);
         console.log(`✅ Solution obtenue, remplissage des lignes 4-8 (45 dernières cellules)`);
-        
+
         console.log("\nÉtape 3: Remplissage de la solution (partie basse)");
-        const stillThere = await getSudokuGrid();
-        if (!stillThere) {
-            console.log("Rechargement de la page...");
-            await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-            await sleep(3000);
-            if (!await getSudokuGrid()) return false;
-        }
-        
         const success = await fillBottomHalf(solvedValues);
         if (!success) return false;
         
-        console.log("📢 Notification du partenaire que nous avons terminé notre partie");
+        console.log("📢 Notification du partenaire");
+        myStatus.hasFinished = true; // Je signale que J'AI FINI
         await notifyPartnerFinished();
-        partnerStatus.hasFinished = true;
 
-        await waitForPartner();
-        
-        console.log("\nÉtape 4: Rechargement de la page pour un nouveau Sudoku");
-        await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
+        console.log("Attente du partenaire...");
+        await waitForPartner(); // Attend que le partenaire (bot supérieur) termine
+
+        console.log("\nÉtape 4: Rechargement de la page");
+        await currentPage.reload({ waitUntil: "networkidle2" });
         await sleep(4000);
-        console.log("Nouvelle grille chargée avec succès!");
         
-        partnerStatus.hasFinished = false;
-        
+        myStatus.hasFinished = false; // Réinitialisation pour le prochain Sudoku
         return true;
         
     } catch (error) {
         console.error(`Erreur dans la résolution: ${error.message}`);
         return false;
+    } finally {
+        myStatus.isProcessing = false;
     }
 }
 
