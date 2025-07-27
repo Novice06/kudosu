@@ -4,7 +4,7 @@ import * as dotenv from "dotenv";
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import axios from 'axios';
+import http from 'http';
 
 dotenv.config();
 
@@ -16,7 +16,7 @@ const COOKIE_FILE = 'cookies.json';
 const MAX_SOLVED_PER_SESSION = 1000;
 const GAME_URL = "https://sudoku.lumitelburundi.com/game";
 const BASE_URL = "https://sudoku.lumitelburundi.com";
-const PARTNER_URL = "https://num66-kudosu.onrender.com"; // URL du bot haut
+const PARTNER_URL = "https://num66-kudosu.onrender.com";
 
 // Variables d'état
 let currentBrowser = null;
@@ -376,13 +376,30 @@ async function fillMyPart(solvedValues) {
     }
 }
 
-async function notifyPartnerDone() {
-    try {
-        await axios.post(`${PARTNER_URL}/notify-done`, {});
-        console.log("✅ Partenaire notifié de la complétion");
-    } catch (error) {
-        console.log("❌ Échec de la notification du partenaire");
-    }
+function notifyPartnerDone() {
+    return new Promise((resolve) => {
+        const options = {
+            hostname: new URL(PARTNER_URL).hostname,
+            port: new URL(PARTNER_URL).port || 80,
+            path: '/notify-done',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        };
+
+        const req = http.request(options, (res) => {
+            console.log(`✅ Partenaire notifié, status: ${res.statusCode}`);
+            resolve();
+        });
+
+        req.on('error', (error) => {
+            console.error('❌ Erreur notification partenaire:', error);
+            resolve();
+        });
+
+        req.end();
+    });
 }
 
 async function waitForPartner() {
@@ -390,8 +407,9 @@ async function waitForPartner() {
     while (!partnerPartDone) {
         await sleep(3000);
         try {
-            const response = await axios.get(`${PARTNER_URL}/status`);
-            if (response.data.myPartDone) {
+            const response = await fetch(`${PARTNER_URL}/status`);
+            const data = await response.json();
+            if (data.myPartDone) {
                 partnerPartDone = true;
                 break;
             }
