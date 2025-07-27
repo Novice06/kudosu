@@ -4,7 +4,6 @@ import * as dotenv from "dotenv";
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import http from 'http';
 
 dotenv.config();
 
@@ -16,7 +15,7 @@ const COOKIE_FILE = 'cookies.json';
 const MAX_SOLVED_PER_SESSION = 1000;
 const GAME_URL = "https://sudoku.lumitelburundi.com/game";
 const BASE_URL = "https://sudoku.lumitelburundi.com";
-const PARTNER_URL = "https://num66-kudosu.onrender.com"; // URL du bot partenaire
+const PARTNER_URL = "https://num66-kudosu.onrender.com";
 
 // Variables d'état
 let currentBrowser = null;
@@ -32,7 +31,6 @@ let partnerStatus = {
     hasFinished: false
 };
 
-// Chemins
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Routes
@@ -40,10 +38,10 @@ app.get("/", (req, res) => {
     res.json({
         message: "Sudoku Solver Bot 2 (Bottom Half) is running",
         endpoints: {
-            start: "/start-sudoku - POST - Démarre le processus de résolution",
-            phone: "/submit-phone - POST - Soumet le numéro de téléphone",
+            start: "/start-sudoku - POST - Démarre le processus",
+            phone: "/submit-phone - POST - Soumet le numéro",
             otp: "/submit-otp - POST - Soumet le code OTP",
-            status: "/status - GET - Vérifie le statut du processus",
+            status: "/status - GET - Vérifie le statut",
             partner: "/partner-status - GET - Statut du partenaire"
         }
     });
@@ -153,12 +151,38 @@ app.post("/submit-otp", async (req, res) => {
     });
 });
 
+app.post("/notify-finished", (req, res) => {
+    partnerStatus.hasFinished = req.body.finished;
+    res.json({ success: true });
+});
+
 // Fonctions utilitaires
 async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Gestion des cookies
+async function initBrowser() {
+    return await puppeteer.launch({
+        args: [
+            "--disable-setuid-sandbox",
+            "--no-sandbox",
+            "--single-process",
+            "--no-zygote",
+            "--disable-dev-shm-usage"
+        ],
+        executablePath: process.env.CHROME_PATH || "/usr/bin/google-chrome-stable",
+        headless: "new",
+        timeout: 60000
+    });
+}
+
+async function initPage(browser) {
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+    await page.setViewport({ width: 1280, height: 720 });
+    return page;
+}
+
 async function saveCookies(page) {
     try {
         const cookies = await page.cookies();
@@ -185,45 +209,62 @@ async function loadCookies(page) {
     }
 }
 
-async function initBrowser() {
-    return await puppeteer.launch({
-        args: [
-            "--disable-setuid-sandbox",
-            "--no-sandbox",
-            "--single-process",
-            "--no-zygote",
-            "--disable-dev-shm-usage"
-        ],
-        executablePath: process.env.CHROME_PATH || "/usr/bin/google-chrome-stable",
-        headless: "new",
-        timeout: 60000
-    });
+async function checkPartnerStatus() {
+    try {
+        const response = await fetch(`${PARTNER_URL}/partner-status`);
+        return await response.json();
+    } catch (error) {
+        console.error("Erreur de vérification du partenaire:", error.message);
+        throw error;
+    }
 }
 
-async function initPage(browser) {
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-    await page.setViewport({ width: 1280, height: 720 });
-    return page;
+async function notifyPartnerFinished() {
+    try {
+        const response = await fetch(`${PARTNER_URL}/notify-finished`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ finished: true })
+        });
+        return await response.json();
+    } catch (error) {
+        console.error("Erreur de notification du partenaire:", error.message);
+        throw error;
+    }
 }
 
-// Algorithme de résolution de Sudoku
+async function waitForPartner() {
+    console.log("⏳ En attente que le partenaire termine sa partie...");
+    while (true) {
+        try {
+            const status = await checkPartnerStatus();
+            if (status.hasFinished) {
+                console.log("✅ Partenaire a terminé sa partie");
+                return true;
+            }
+            await sleep(3000);
+        } catch (error) {
+            console.log("Erreur de vérification du partenaire, nouvelle tentative dans 5 secondes...");
+            await sleep(5000);
+        }
+    }
+}
+
 function isSafe(board, row, col, num) {
-    // Vérifie la ligne
     for (let d = 0; d < board.length; d++) {
         if (board[row][d] === num) {
             return false;
         }
     }
 
-    // Vérifie la colonne
     for (let r = 0; r < board.length; r++) {
         if (board[r][col] === num) {
             return false;
         }
     }
 
-    // Vérifie la sous-grille 3x3
     const sqrt = Math.floor(Math.sqrt(board.length));
     const boxRowStart = row - row % sqrt;
     const boxColStart = col - col % sqrt;
@@ -288,70 +329,87 @@ function convertTo1D(board) {
     return board.flat();
 }
 
-async function checkPartnerStatus() {
-    return new Promise((resolve, reject) => {
-        http.get(`${PARTNER_URL}/partner-status`, (res) => {
-            let data = '';
-            res.on('data', (chunk) => data += chunk);
-            res.on('end', () => {
-                try {
-                    const status = JSON.parse(data);
-                    resolve(status);
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        }).on('error', reject);
-    });
-}
-
-async function notifyPartnerFinished() {
-    return new Promise((resolve, reject) => {
-        const req = http.request(`${PARTNER_URL}/notify-finished`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        }, (res) => {
-            let data = '';
-            res.on('data', (chunk) => data += chunk);
-            res.on('end', () => {
-                try {
-                    const response = JSON.parse(data);
-                    resolve(response);
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        });
-
-        req.on('error', reject);
-        req.write(JSON.stringify({ finished: true }));
-        req.end();
-    });
-}
-
-async function waitForPartner() {
-    console.log("⏳ En attente que le partenaire termine sa partie...");
-    while (true) {
+async function getSudokuGrid() {
+    try {
         try {
-            const status = await checkPartnerStatus();
-            if (status.hasFinished) {
-                console.log("✅ Partenaire a terminé sa partie");
-                return true;
-            }
+            await currentPage.waitForFunction(() => document.readyState === 'complete', { timeout: 5000 });
+        } catch (e) {
+            console.log("⚠ La page ne répond pas, tentative de rafraîchissement...");
+            await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
             await sleep(3000);
-        } catch (error) {
-            console.log("Erreur de vérification du partenaire, nouvelle tentative dans 5 secondes...");
-            await sleep(5000);
         }
+
+        await currentPage.waitForSelector("div.grid.grid-cols-9.gap-0.border-4.border-black", { 
+            timeout: 20000,
+            visible: true
+        });
+        
+        const gridValues = await currentPage.evaluate(() => {
+            const cells = document.querySelectorAll("div.grid.grid-cols-9.gap-0.border-4.border-black div.w-10.h-10");
+            return Array.from(cells).map(cell => cell.textContent.trim());
+        });
+        
+        if (gridValues.length === 81) {
+            return gridValues;
+        }
+        
+        console.log("Grille incomplète trouvée (", gridValues.length, "éléments)");
+        return null;
+    } catch (error) {
+        console.error(`Erreur récupération grille: ${error.message}`);
+        return null;
     }
 }
 
-app.post("/notify-finished", (req, res) => {
-    partnerStatus.hasFinished = req.body.finished;
-    res.json({ success: true });
-});
+async function fillBottomHalf(solvedValues) {
+    try {
+        const cells = await currentPage.$$("div.grid.grid-cols-9.gap-0.border-4.border-black div.w-10.h-10");
+        const numberButtons = await currentPage.$$("div.flex.gap-2.mt-4 button");
+        
+        for (let i = 36; i < 81; i++) {
+            const currentValue = await cells[i].evaluate(el => el.textContent.trim());
+            const targetValue = solvedValues[i].toString();
+            
+            if (currentValue === targetValue) continue;
+            
+            if (!currentValue && targetValue) {
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        const currentVal = await cells[i].evaluate(el => el.textContent.trim());
+                        if (currentVal === targetValue) break;
+                        
+                        if (!currentVal) {
+                            await cells[i].click();
+                            await sleep(300);
+                            
+                            const isSelected = await cells[i].evaluate(el => 
+                                el.className.includes("bg-blue-200")
+                            );
+                            
+                            if (isSelected && numberButtons[parseInt(targetValue) - 1]) {
+                                await numberButtons[parseInt(targetValue) - 1].click();
+                                await sleep(500);
+                                
+                                const newValue = await cells[i].evaluate(el => el.textContent.trim());
+                                if (newValue === targetValue) break;
+                                
+                                console.log(`⚠ Réessai case ${i} (valeur non prise)`);
+                                await sleep(1000);
+                            }
+                        }
+                    } catch (error) {
+                        console.log(`Erreur case ${i}: ${error.message.substring(0, 50)}`);
+                        await sleep(1000);
+                    }
+                }
+            }
+        }
+        return true;
+    } catch (error) {
+        console.error(`Erreur remplissage: ${error.message}`);
+        return false;
+    }
+}
 
 async function handleLogin(cookiesLoaded = false, maxAttempts = 3) {
     let attempt = 0;
@@ -441,89 +499,6 @@ async function handleLogin(cookiesLoaded = false, maxAttempts = 3) {
     return false;
 }
 
-async function getSudokuGrid() {
-    try {
-        try {
-            await currentPage.waitForFunction(() => document.readyState === 'complete', { timeout: 5000 });
-        } catch (e) {
-            console.log("⚠ La page ne répond pas, tentative de rafraîchissement...");
-            await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-            await sleep(3000);
-        }
-
-        await currentPage.waitForSelector("div.grid.grid-cols-9.gap-0.border-4.border-black", { 
-            timeout: 20000,
-            visible: true
-        });
-        
-        const gridValues = await currentPage.evaluate(() => {
-            const cells = document.querySelectorAll("div.grid.grid-cols-9.gap-0.border-4.border-black div.w-10.h-10");
-            return Array.from(cells).map(cell => cell.textContent.trim());
-        });
-        
-        if (gridValues.length === 81) {
-            return gridValues;
-        }
-        
-        console.log("Grille incomplète trouvée (", gridValues.length, "éléments)");
-        return null;
-    } catch (error) {
-        console.error(`Erreur récupération grille: ${error.message}`);
-        return null;
-    }
-}
-
-async function fillBottomHalf(solvedValues) {
-    try {
-        const cells = await currentPage.$$("div.grid.grid-cols-9.gap-0.border-4.border-black div.w-10.h-10");
-        const numberButtons = await currentPage.$$("div.flex.gap-2.mt-4 button");
-        
-        // On ne remplit que les lignes 4 à 8 (dernières 5 lignes)
-        for (let i = 36; i < 81; i++) { // 5 lignes * 9 colonnes = 45 cellules
-            const currentValue = await cells[i].evaluate(el => el.textContent.trim());
-            const targetValue = solvedValues[i].toString();
-            
-            if (currentValue === targetValue) continue;
-            
-            if (!currentValue && targetValue) {
-                for (let attempt = 0; attempt < 3; attempt++) {
-                    try {
-                        const currentVal = await cells[i].evaluate(el => el.textContent.trim());
-                        if (currentVal === targetValue) break;
-                        
-                        if (!currentVal) {
-                            await cells[i].click();
-                            await sleep(300);
-                            
-                            const isSelected = await cells[i].evaluate(el => 
-                                el.className.includes("bg-blue-200")
-                            );
-                            
-                            if (isSelected && numberButtons[parseInt(targetValue) - 1]) {
-                                await numberButtons[parseInt(targetValue) - 1].click();
-                                await sleep(500);
-                                
-                                const newValue = await cells[i].evaluate(el => el.textContent.trim());
-                                if (newValue === targetValue) break;
-                                
-                                console.log(`⚠ Réessai case ${i} (valeur non prise)`);
-                                await sleep(1000);
-                            }
-                        }
-                    } catch (error) {
-                        console.log(`Erreur case ${i}: ${error.message.substring(0, 50)}`);
-                        await sleep(1000);
-                    }
-                }
-            }
-        }
-        return true;
-    } catch (error) {
-        console.error(`Erreur remplissage: ${error.message}`);
-        return false;
-    }
-}
-
 async function solveOneSudoku(roundNumber) {
     console.log(`\n${'='.repeat(50)}`);
     console.log(`🎯 ROUND ${roundNumber} (BOT 2 - BOTTOM HALF)`);
@@ -565,13 +540,11 @@ async function solveOneSudoku(roundNumber) {
             if (!await getSudokuGrid()) return false;
         }
         
-        // Attendre que le partenaire termine sa partie
         await waitForPartner();
         
         const success = await fillBottomHalf(solvedValues);
         if (!success) return false;
         
-        // Notifier le partenaire qu'on a fini notre partie
         console.log("📢 Notification du partenaire que nous avons terminé notre partie");
         await notifyPartnerFinished();
         partnerStatus.hasFinished = true;
@@ -581,7 +554,6 @@ async function solveOneSudoku(roundNumber) {
         await sleep(4000);
         console.log("Nouvelle grille chargée avec succès!");
         
-        // Réinitialiser les statuts pour le prochain sudoku
         partnerStatus.hasFinished = false;
         
         return true;
@@ -690,7 +662,6 @@ async function solveSudokuProcess() {
     }
 }
 
-// Gestion de l'arrêt propre
 process.on('SIGINT', async () => {
     console.log('\n🛑 Arrêt par utilisateur');
     if (currentBrowser) {
@@ -702,10 +673,5 @@ process.on('SIGINT', async () => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.log(`🚀 Sudoku Solver Bot 2 (Bottom Half) running on port ${PORT}`);
-    console.log(`📱 Endpoints disponibles:`);
-    console.log(`   POST /start-sudoku - Démarre le processus`);
-    console.log(`   POST /submit-phone - Soumet le numéro (body: {phone: "123456789"})`);
-    console.log(`   POST /submit-otp - Soumet l'OTP (body: {otp: "123456"})`);
-    console.log(`   GET /status - Vérifie le statut`);
-    console.log(`\n🤝 Partenaire configuré: ${PARTNER_URL}`);
+    console.log(`🤝 Partenaire configuré: ${PARTNER_URL}`);
 });
