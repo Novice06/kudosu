@@ -15,7 +15,7 @@ const COOKIE_FILE = 'cookies.json';
 const MAX_SOLVED_PER_SESSION = 1000;
 const GAME_URL = "https://sudoku.lumitelburundi.com/game";
 const BASE_URL = "https://sudoku.lumitelburundi.com";
-const PARTNER_URL = "https://num66-kudosu.onrender.com";
+const PARTNER_URL = "https://superior5-kudosu.onrender.com";
 
 // Variables d'état
 let currentBrowser = null;
