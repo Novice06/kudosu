@@ -419,6 +419,9 @@ async function handleLogin(cookiesLoaded = false, maxAttempts = 3) {
             console.log(`\nTentative de connexion ${attempt + 1}/${maxAttempts}`);
             await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
             await sleep(2000);
+
+            await currentPage.reload({ waitUntil: "networkidle2" });
+            await sleep(3000);
             
             const currentUrl = currentPage.url();
             if (!currentUrl.includes(GAME_URL)) {
@@ -507,6 +510,9 @@ async function solveOneSudoku(roundNumber) {
     try {
         console.log("Étape 1: Chargement de la grille");
         await currentPage.bringToFront();
+
+        await currentPage.reload({ waitUntil: "networkidle2" });
+        await sleep(3000);
         
         let gridValues = await getSudokuGrid();
         if (!gridValues) {
@@ -540,14 +546,14 @@ async function solveOneSudoku(roundNumber) {
             if (!await getSudokuGrid()) return false;
         }
         
-        await waitForPartner();
-        
         const success = await fillBottomHalf(solvedValues);
         if (!success) return false;
         
         console.log("📢 Notification du partenaire que nous avons terminé notre partie");
         await notifyPartnerFinished();
         partnerStatus.hasFinished = true;
+
+        await waitForPartner();
         
         console.log("\nÉtape 4: Rechargement de la page pour un nouveau Sudoku");
         await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
