@@ -149,6 +149,33 @@ app.post("/submit-otp", async (req, res) => {
     });
 });
 
+// Gestion des cookies
+async function saveCookies(page) {
+    try {
+        const cookies = await page.cookies();
+        fs.writeFileSync(path.join(__dirname, COOKIE_FILE), JSON.stringify(cookies, null, 2));
+        console.log('🍪 Cookies sauvegardés');
+    } catch (error) {
+        console.error('Erreur sauvegarde cookies:', error.message);
+    }
+}
+
+async function loadCookies(page) {
+    try {
+        const cookiePath = path.join(__dirname, COOKIE_FILE);
+        if (fs.existsSync(cookiePath)) {
+            const cookies = JSON.parse(fs.readFileSync(cookiePath, 'utf8'));
+            await page.setCookie(...cookies);
+            console.log('🍪 Cookies chargés');
+            return true;
+        }
+        return false;
+    } catch (error) {
+        console.error('Erreur chargement cookies:', error.message);
+        return false;
+    }
+}
+
 // Fonctions utilitaires
 async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
