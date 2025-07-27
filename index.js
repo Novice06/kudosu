@@ -16,7 +16,7 @@ const COOKIE_FILE = 'cookies.json';
 const MAX_SOLVED_PER_SESSION = 1000;
 const GAME_URL = "https://sudoku.lumitelburundi.com/game";
 const BASE_URL = "https://sudoku.lumitelburundi.com";
-const PARTNER_URL = "https://num66-kudosu.onrender.com";
+const PARTNER_URL = "https://num66-kudosu.onrender.com"; // URL du bot partenaire
 
 // Variables d'état
 let currentBrowser = null;
@@ -27,8 +27,10 @@ let phoneNumber = '';
 let otpCode = '';
 let isProcessing = false;
 let solvedCount = 0;
-let myPartDone = false;
-let partnerPartDone = false;
+let partnerStatus = {
+    isProcessing: false,
+    hasFinished: false
+};
 
 // Chemins
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -36,13 +38,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Routes
 app.get("/", (req, res) => {
     res.json({
-        message: "Sudoku Solver Bot Bas API is running",
+        message: "Sudoku Solver Bot 2 (Bottom Half) is running",
         endpoints: {
-            start: "/start-sudoku - POST - Démarre le processus",
-            phone: "/submit-phone - POST - Soumet le numéro",
+            start: "/start-sudoku - POST - Démarre le processus de résolution",
+            phone: "/submit-phone - POST - Soumet le numéro de téléphone",
             otp: "/submit-otp - POST - Soumet le code OTP",
-            status: "/status - GET - Vérifie le statut",
-            notify: "/notify-done - POST - Notification partenaire"
+            status: "/status - GET - Vérifie le statut du processus",
+            partner: "/partner-status - GET - Statut du partenaire"
         }
     });
 });
@@ -56,14 +58,15 @@ app.get("/status", (req, res) => {
         hasPage: !!currentPage,
         solvedCount,
         maxPerSession: MAX_SOLVED_PER_SESSION,
-        myPartDone,
-        partnerPartDone
+        hasFinished: partnerStatus.hasFinished
     });
 });
 
-app.post("/notify-done", (req, res) => {
-    partnerPartDone = true;
-    res.json({ success: true, message: "Notification reçue" });
+app.get("/partner-status", (req, res) => {
+    res.json({
+        isProcessing,
+        hasFinished: partnerStatus.hasFinished
+    });
 });
 
 app.post("/start-sudoku", async (req, res) => {
@@ -76,8 +79,9 @@ app.post("/start-sudoku", async (req, res) => {
 
     try {
         isProcessing = true;
+        partnerStatus.hasFinished = false;
         solvedCount = 0;
-        console.log("🚀 Démarrage du solveur Sudoku (Bot Bas)...");
+        console.log("🚀 Démarrage du solveur Sudoku (Bot 2 - Bottom Half)...");
         
         solveSudokuProcess().catch(error => {
             console.error("Erreur dans le processus:", error);
@@ -149,33 +153,6 @@ app.post("/submit-otp", async (req, res) => {
     });
 });
 
-// Gestion des cookies
-async function saveCookies(page) {
-    try {
-        const cookies = await page.cookies();
-        fs.writeFileSync(path.join(__dirname, COOKIE_FILE), JSON.stringify(cookies, null, 2));
-        console.log('🍪 Cookies sauvegardés');
-    } catch (error) {
-        console.error('Erreur sauvegarde cookies:', error.message);
-    }
-}
-
-async function loadCookies(page) {
-    try {
-        const cookiePath = path.join(__dirname, COOKIE_FILE);
-        if (fs.existsSync(cookiePath)) {
-            const cookies = JSON.parse(fs.readFileSync(cookiePath, 'utf8'));
-            await page.setCookie(...cookies);
-            console.log('🍪 Cookies chargés');
-            return true;
-        }
-        return false;
-    } catch (error) {
-        console.error('Erreur chargement cookies:', error.message);
-        return false;
-    }
-}
-
 // Fonctions utilitaires
 async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -205,21 +182,30 @@ async function initPage(browser) {
 
 // Algorithme de résolution de Sudoku
 function isSafe(board, row, col, num) {
+    // Vérifie la ligne
     for (let d = 0; d < board.length; d++) {
-        if (board[row][d] === num) return false;
+        if (board[row][d] === num) {
+            return false;
+        }
     }
 
+    // Vérifie la colonne
     for (let r = 0; r < board.length; r++) {
-        if (board[r][col] === num) return false;
+        if (board[r][col] === num) {
+            return false;
+        }
     }
 
+    // Vérifie la sous-grille 3x3
     const sqrt = Math.floor(Math.sqrt(board.length));
     const boxRowStart = row - row % sqrt;
     const boxColStart = col - col % sqrt;
 
     for (let r = boxRowStart; r < boxRowStart + sqrt; r++) {
         for (let d = boxColStart; d < boxColStart + sqrt; d++) {
-            if (board[r][d] === num) return false;
+            if (board[r][d] === num) {
+                return false;
+            }
         }
     }
 
@@ -241,16 +227,23 @@ function solveSudoku(board) {
                 break;
             }
         }
-        if (!isEmpty) break;
+        if (!isEmpty) {
+            break;
+        }
     }
 
-    if (isEmpty) return true;
+    if (isEmpty) {
+        return true;
+    }
 
     for (let num = 1; num <= n; num++) {
         if (isSafe(board, row, col, num)) {
             board[row][col] = num;
-            if (solveSudoku(board)) return true;
-            else board[row][col] = 0;
+            if (solveSudoku(board)) {
+                return true;
+            } else {
+                board[row][col] = 0;
+            }
         }
     }
     return false;
@@ -268,31 +261,106 @@ function convertTo1D(board) {
     return board.flat();
 }
 
+async function checkPartnerStatus() {
+    return new Promise((resolve, reject) => {
+        http.get(`${PARTNER_URL}/partner-status`, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                try {
+                    const status = JSON.parse(data);
+                    resolve(status);
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        }).on('error', reject);
+    });
+}
+
+async function notifyPartnerFinished() {
+    return new Promise((resolve, reject) => {
+        const req = http.request(`${PARTNER_URL}/notify-finished`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        }, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                try {
+                    const response = JSON.parse(data);
+                    resolve(response);
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.write(JSON.stringify({ finished: true }));
+        req.end();
+    });
+}
+
+async function waitForPartner() {
+    console.log("⏳ En attente que le partenaire termine sa partie...");
+    while (true) {
+        try {
+            const status = await checkPartnerStatus();
+            if (status.hasFinished) {
+                console.log("✅ Partenaire a terminé sa partie");
+                return true;
+            }
+            await sleep(3000);
+        } catch (error) {
+            console.log("Erreur de vérification du partenaire, nouvelle tentative dans 5 secondes...");
+            await sleep(5000);
+        }
+    }
+}
+
+app.post("/notify-finished", (req, res) => {
+    partnerStatus.hasFinished = req.body.finished;
+    res.json({ success: true });
+});
+
 async function handleLogin(cookiesLoaded = false, maxAttempts = 3) {
     let attempt = 0;
     
     while (attempt < maxAttempts) {
         try {
+            console.log(`\nTentative de connexion ${attempt + 1}/${maxAttempts}`);
             await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
             await sleep(2000);
             
             const currentUrl = currentPage.url();
             if (!currentUrl.includes(GAME_URL)) {
-                if (cookiesLoaded) cookiesLoaded = false;
+                if (cookiesLoaded) {
+                    console.log("Redirection malgré les cookies, ils sont peut-être expirés");
+                    cookiesLoaded = false;
+                }
                 
+                console.log("Redirection détectée, démarrage du processus de connexion...");
+                
+                console.log("Étape 1: Clique sur le bouton Kwinjira");
                 await currentPage.waitForSelector("button.w-53.py-3.px-6.bg-gradient-to-r.from-amber-400.to-amber-500.text-white.text-lg.font-bold.rounded-full.shadow-lg.mt-36", { timeout: 30000 });
                 await currentPage.click("button.w-53.py-3.px-6.bg-gradient-to-r.from-amber-400.to-amber-500.text-white.text-lg.font-bold.rounded-full.shadow-lg.mt-36");
                 await sleep(2000);
                 
                 await currentPage.waitForFunction(() => window.location.href.includes("/login"));
                 
+                console.log("Étape 2: Demande du numéro de téléphone");
                 await currentPage.waitForSelector("input[placeholder='Nimushiremwo inomero ya terefone']", { timeout: 30000 });
                 
                 waitingForPhone = true;
                 phoneNumber = '';
-                console.log("📱 En attente du numéro de téléphone...");
+                console.log("📱 En attente du numéro de téléphone via l'API...");
                 
-                while (waitingForPhone || !phoneNumber) await sleep(1000);
+                while (waitingForPhone || !phoneNumber) {
+                    await sleep(1000);
+                }
                 
                 await currentPage.type("input[placeholder='Nimushiremwo inomero ya terefone']", phoneNumber);
                 await sleep(1000);
@@ -300,45 +368,62 @@ async function handleLogin(cookiesLoaded = false, maxAttempts = 3) {
                 await currentPage.click("button.w-full.py-2.bg-red-700.text-white.rounded-md.font-semibold.hover\\:bg-red-600.transition.duration-200");
                 await sleep(2000);
                 
+                console.log("Étape 3: Demande du code OTP");
                 await currentPage.waitForSelector("input[placeholder='OTP']", { timeout: 30000 });
                 
                 waitingForOTP = true;
                 otpCode = '';
-                console.log("🔐 En attente du code OTP...");
+                console.log("🔐 En attente du code OTP via l'API...");
                 
-                while (waitingForOTP || !otpCode) await sleep(1000);
+                while (waitingForOTP || !otpCode) {
+                    await sleep(1000);
+                }
                 
                 await currentPage.type("input[placeholder='OTP']", otpCode);
                 await sleep(1000);
                 
                 await currentPage.click("button.w-full.py-2.bg-red-700.text-white.rounded-md.font-semibold.hover\\:bg-red-800.transition.duration-200");
+                console.log("Attente de 10 secondes...");
                 await sleep(10000);
                 
+                console.log("Navigation vers la page de jeu...");
                 await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
                 await sleep(3000);
                 
                 if (!currentPage.url().includes(GAME_URL)) {
+                    console.log("La connexion a échoué, nouvelle tentative...");
                     attempt++;
                     continue;
                 }
                 
+                console.log("Connexion réussie!");
                 return true;
             }
             
+            console.log("Déjà connecté, poursuite du script...");
             return true;
             
         } catch (error) {
+            console.log(`Erreur lors de la tentative de connexion: ${error.message}`);
             attempt++;
             await sleep(5000);
         }
     }
     
+    console.log(`Échec après ${maxAttempts} tentatives de connexion`);
     return false;
 }
 
 async function getSudokuGrid() {
     try {
-        await currentPage.waitForFunction(() => document.readyState === 'complete', { timeout: 5000 });
+        try {
+            await currentPage.waitForFunction(() => document.readyState === 'complete', { timeout: 5000 });
+        } catch (e) {
+            console.log("⚠ La page ne répond pas, tentative de rafraîchissement...");
+            await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
+            await sleep(3000);
+        }
+
         await currentPage.waitForSelector("div.grid.grid-cols-9.gap-0.border-4.border-black", { 
             timeout: 20000,
             visible: true
@@ -349,20 +434,25 @@ async function getSudokuGrid() {
             return Array.from(cells).map(cell => cell.textContent.trim());
         });
         
-        if (gridValues.length === 81) return gridValues;
+        if (gridValues.length === 81) {
+            return gridValues;
+        }
+        
+        console.log("Grille incomplète trouvée (", gridValues.length, "éléments)");
         return null;
     } catch (error) {
+        console.error(`Erreur récupération grille: ${error.message}`);
         return null;
     }
 }
 
-async function fillMyPart(solvedValues) {
+async function fillBottomHalf(solvedValues) {
     try {
         const cells = await currentPage.$$("div.grid.grid-cols-9.gap-0.border-4.border-black div.w-10.h-10");
         const numberButtons = await currentPage.$$("div.flex.gap-2.mt-4 button");
         
-        // Remplir seulement les lignes 5 à 9 (indices 36-80)
-        for (let i = 36; i < 81; i++) {
+        // On ne remplit que les lignes 4 à 8 (dernières 5 lignes)
+        for (let i = 36; i < 81; i++) { // 5 lignes * 9 colonnes = 45 cellules
             const currentValue = await cells[i].evaluate(el => el.textContent.trim());
             const targetValue = solvedValues[i].toString();
             
@@ -388,10 +478,13 @@ async function fillMyPart(solvedValues) {
                                 
                                 const newValue = await cells[i].evaluate(el => el.textContent.trim());
                                 if (newValue === targetValue) break;
+                                
+                                console.log(`⚠ Réessai case ${i} (valeur non prise)`);
                                 await sleep(1000);
                             }
                         }
                     } catch (error) {
+                        console.log(`Erreur case ${i}: ${error.message.substring(0, 50)}`);
                         await sleep(1000);
                     }
                 }
@@ -399,65 +492,23 @@ async function fillMyPart(solvedValues) {
         }
         return true;
     } catch (error) {
+        console.error(`Erreur remplissage: ${error.message}`);
         return false;
     }
 }
 
-function notifyPartnerDone() {
-    return new Promise((resolve) => {
-        const options = {
-            hostname: new URL(PARTNER_URL).hostname,
-            port: new URL(PARTNER_URL).port || 80,
-            path: '/notify-done',
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            }
-        };
-
-        const req = http.request(options, (res) => {
-            console.log(`✅ Partenaire notifié, status: ${res.statusCode}`);
-            resolve();
-        });
-
-        req.on('error', (error) => {
-            console.error('❌ Erreur notification partenaire:', error);
-            resolve();
-        });
-
-        req.end();
-    });
-}
-
-async function waitForPartner() {
-    console.log("⏳ En attente du partenaire...");
-    while (!partnerPartDone) {
-        await sleep(3000);
-        try {
-            const response = await fetch(`${PARTNER_URL}/status`);
-            const data = await response.json();
-            if (data.myPartDone) {
-                partnerPartDone = true;
-                break;
-            }
-        } catch (error) {
-            console.log("Erreur de vérification du partenaire, réessai...");
-        }
-    }
-    console.log("✅ Partenaire a terminé sa partie");
-}
-
 async function solveOneSudoku(roundNumber) {
     console.log(`\n${'='.repeat(50)}`);
-    console.log(`🎯 ROUND ${roundNumber} (BOT HAUT)`);
+    console.log(`🎯 ROUND ${roundNumber} (BOT 2 - BOTTOM HALF)`);
     console.log(`${'='.repeat(50)}`);
     
     try {
-        myPartDone = false;
-        partnerPartDone = false;
+        console.log("Étape 1: Chargement de la grille");
+        await currentPage.bringToFront();
         
         let gridValues = await getSudokuGrid();
         if (!gridValues) {
+            console.log("🔄 Rafraîchissement de la page...");
             await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
             await sleep(3000);
             gridValues = await getSudokuGrid();
@@ -465,38 +516,72 @@ async function solveOneSudoku(roundNumber) {
         }
         
         const numericGrid = gridValues.map(val => val === '' ? 0 : parseInt(val));
+        
+        console.log("\nÉtape 2: Résolution du Sudoku (partie basse)");
         const board = convertTo2D(numericGrid);
         const isSolved = solveSudoku(board);
         
-        if (!isSolved) return false;
+        if (!isSolved) {
+            console.log("❌ Impossible de résoudre cette grille");
+            return false;
+        }
         
         const solvedValues = convertTo1D(board);
+        console.log(`✅ Solution obtenue, remplissage des lignes 4-8 (45 dernières cellules)`);
         
+        console.log("\nÉtape 3: Remplissage de la solution (partie basse)");
         const stillThere = await getSudokuGrid();
         if (!stillThere) {
+            console.log("Rechargement de la page...");
             await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
             await sleep(3000);
             if (!await getSudokuGrid()) return false;
         }
         
-        await fillMyPart(solvedValues);
-        myPartDone = true;
-        await notifyPartnerDone();
-        
+        // Attendre que le partenaire termine sa partie
         await waitForPartner();
         
-        console.log("🔄 Rechargement de la page pour un nouveau sudoku...");
+        const success = await fillBottomHalf(solvedValues);
+        if (!success) return false;
+        
+        // Notifier le partenaire qu'on a fini notre partie
+        console.log("📢 Notification du partenaire que nous avons terminé notre partie");
+        await notifyPartnerFinished();
+        partnerStatus.hasFinished = true;
+        
+        console.log("\nÉtape 4: Rechargement de la page pour un nouveau Sudoku");
         await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-        await sleep(3000);
+        await sleep(4000);
+        console.log("Nouvelle grille chargée avec succès!");
+        
+        // Réinitialiser les statuts pour le prochain sudoku
+        partnerStatus.hasFinished = false;
         
         return true;
+        
     } catch (error) {
+        console.error(`Erreur dans la résolution: ${error.message}`);
         return false;
+    }
+}
+
+async function resetBrowser() {
+    try {
+        if (currentBrowser) {
+            await currentBrowser.close();
+        }
+        
+        currentBrowser = await initBrowser();
+        currentPage = await initPage(currentBrowser);
+    } catch (error) {
+        console.error("Erreur lors de la réinitialisation:", error);
     }
 }
 
 async function solveSudokuProcess() {
     try {
+        console.log("=== Démarrage du solveur Sudoku (Bot 2 - Bottom Half) ===");
+        
         currentBrowser = await initBrowser();
         currentPage = await initPage(currentBrowser);
 
@@ -505,14 +590,23 @@ async function solveSudokuProcess() {
         let loginSuccess = false;
         while (!loginSuccess) {
             loginSuccess = await handleLogin(cookiesLoaded);
-            if (!loginSuccess) await sleep(10000);
+            if (!loginSuccess) {
+                console.log("Nouvelle tentative de connexion dans 10 secondes...");
+                await sleep(10000);
+                await currentPage.reload();
+            }
         }
+
+        await saveCookies(currentPage);
 
         let roundNumber = 1;
         const maxRetries = 3;
 
         while (true) {
             if (solvedCount >= MAX_SOLVED_PER_SESSION) {
+                await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
+                await sleep(3000);
+                
                 solvedCount = 0;
                 roundNumber = 1;
                 continue;
@@ -525,6 +619,11 @@ async function solveSudokuProcess() {
                 success = await solveOneSudoku(roundNumber);
                 if (!success) {
                     retries++;
+                    console.log(`🔄 Tentative ${retries}/${maxRetries}`);
+                    
+                    console.log("🔄 Rafraîchissement de la page principale...");
+                    await resetBrowser();
+                    await handleLogin(false);
                     await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
                     await sleep(3000);
                 }
@@ -533,25 +632,53 @@ async function solveSudokuProcess() {
             if (success) {
                 roundNumber++;
                 solvedCount++;
+                console.log(`✅ Sudoku résolus ce cycle: ${solvedCount}/${MAX_SOLVED_PER_SESSION}`);
             } else {
-                await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-                await sleep(3000);
+                console.log("🔁 Réinitialisation complète");
+                await resetBrowser();
+                solvedCount = 0;
+                
+                let reconnectSuccess = false;
+                while (!reconnectSuccess) {
+                    reconnectSuccess = await handleLogin(false);
+                    if (!reconnectSuccess) {
+                        console.log("Nouvelle tentative de connexion dans 10 secondes...");
+                        await sleep(10000);
+                        await currentPage.reload();
+                    }
+                }
+
+                await saveCookies(currentPage);
+                await sleep(2000);
             }
         }
     } catch (error) {
         console.error('❌ Erreur:', error);
     } finally {
-        if (currentBrowser) await currentBrowser.close();
+        if (currentBrowser) {
+            await currentBrowser.close();
+        }
         isProcessing = false;
+        console.log('👋 Processus terminé');
     }
 }
 
+// Gestion de l'arrêt propre
 process.on('SIGINT', async () => {
-    if (currentBrowser) await currentBrowser.close();
+    console.log('\n🛑 Arrêt par utilisateur');
+    if (currentBrowser) {
+        await currentBrowser.close();
+    }
     process.exit(0);
 });
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-    console.log(`🚀 Sudoku Solver Bot Bas running on port ${PORT}`);
+    console.log(`🚀 Sudoku Solver Bot 2 (Bottom Half) running on port ${PORT}`);
+    console.log(`📱 Endpoints disponibles:`);
+    console.log(`   POST /start-sudoku - Démarre le processus`);
+    console.log(`   POST /submit-phone - Soumet le numéro (body: {phone: "123456789"})`);
+    console.log(`   POST /submit-otp - Soumet l'OTP (body: {otp: "123456"})`);
+    console.log(`   GET /status - Vérifie le statut`);
+    console.log(`\n🤝 Partenaire configuré: ${PARTNER_URL}`);
 });
