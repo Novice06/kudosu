@@ -10,34 +10,39 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Configuration
+// Configuration par défaut
 const COOKIE_FILE = 'cookies.json';
-const MAX_SOLVED_PER_SESSION = 1000;
-const GAME_URL = "https://sudoku.lumitelburundi.com/game";
-const BASE_URL = "https://sudoku.lumitelburundi.com";
+let LOGIN_URL = "https://sweety.lumitel.bi/Home/Login";
+let GAME_URL = "https://sweety.lumitel.bi/Game/StartHtmlGameNoView";
 
 // Variables d'état
 let currentBrowser = null;
 let currentPage = null;
-let waitingForPhone = false;
-let waitingForOTP = false;
-let phoneNumber = '';
-let otpCode = '';
+let waitingForCredentials = false;
 let isProcessing = false;
-let solvedCount = 0;
+let gameStats = {
+    totalRounds: 0,
+    totalPoints: 0,
+    errors: 0,
+    startTime: null,
+    currentRound: 0
+};
 
 // Chemins
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Routes
+// Routes API
 app.get("/", (req, res) => {
     res.json({
-        message: "Sudoku Solver API is running",
+        message: "🎮 Sweety Game Bot API",
+        version: "1.0.0",
+        status: isProcessing ? "RUNNING" : waitingForCredentials ? "WAITING_FOR_CREDENTIALS" : "READY",
         endpoints: {
-            start: "/start-sudoku - POST - Démarre le processus de résolution",
-            phone: "/submit-phone - POST - Soumet le numéro de téléphone",
-            otp: "/submit-otp - POST - Soumet le code OTP",
-            status: "/status - GET - Vérifie le statut du processus"
+            status: "GET /status - Statut détaillé du bot",
+            stats: "GET /stats - Statistiques de jeu",
+            start: "POST /start-game - Démarre le bot",
+            stop: "POST /stop-game - Arrête le bot",
+            config: "POST /config - Configure les URLs"
         }
     });
 });
@@ -45,39 +50,76 @@ app.get("/", (req, res) => {
 app.get("/status", (req, res) => {
     res.json({
         isProcessing,
-        waitingForPhone,
-        waitingForOTP,
+        waitingForCredentials,
         hasBrowser: !!currentBrowser,
         hasPage: !!currentPage,
-        solvedCount,
-        maxPerSession: MAX_SOLVED_PER_SESSION
+        currentRound: gameStats.currentRound,
+        totalRounds: gameStats.totalRounds,
+        loginUrl: LOGIN_URL,
+        gameUrl: GAME_URL
     });
 });
 
-app.post("/start-sudoku", async (req, res) => {
+app.get("/stats", (req, res) => {
+    const uptime = gameStats.startTime ? Date.now() - gameStats.startTime : 0;
+    const avgPointsPerRound = gameStats.totalRounds > 0 ? gameStats.totalPoints / gameStats.totalRounds : 0;
+    
+    res.json({
+        totalRounds: gameStats.totalRounds,
+        totalPoints: gameStats.totalPoints,
+        errors: gameStats.errors,
+        currentRound: gameStats.currentRound,
+        uptime: Math.floor(uptime / 1000), // en secondes
+        averagePointsPerRound: Math.floor(avgPointsPerRound),
+        successRate: gameStats.totalRounds + gameStats.errors > 0 ? 
+            ((gameStats.totalRounds / (gameStats.totalRounds + gameStats.errors)) * 100).toFixed(2) + '%' : '0%'
+    });
+});
+
+app.post("/start-game", async (req, res) => {
+    const { phone, password, rounds = 10 } = req.body;
+    
     if (isProcessing) {
         return res.status(400).json({
             success: false,
-            error: "Le processus est déjà en cours"
+            error: "Le bot est déjà en cours d'exécution"
+        });
+    }
+
+    if (!phone || !password) {
+        return res.status(400).json({
+            success: false,
+            error: "Numéro de téléphone et mot de passe requis"
         });
     }
 
     try {
         isProcessing = true;
-        solvedCount = 0;
-        console.log("🚀 Démarrage du solveur Sudoku...");
+        gameStats.startTime = Date.now();
+        gameStats.currentRound = 0;
         
-        solveSudokuProcess().catch(error => {
-            console.error("Erreur dans le processus:", error);
+        console.log("🚀 Démarrage du bot Sweety Game...");
+        
+        // Lancer le processus de jeu
+        startGameBot(phone, password, rounds).catch(error => {
+            console.error("❌ Erreur dans le processus:", error);
             isProcessing = false;
+            gameStats.errors++;
         });
 
         res.json({
             success: true,
-            message: "Processus de résolution démarré"
+            message: "Bot démarré avec succès!",
+            config: {
+                phone: phone.substring(0, 3) + "****",
+                rounds,
+                loginUrl: LOGIN_URL,
+                gameUrl: GAME_URL
+            }
         });
     } catch (error) {
         isProcessing = false;
+        gameStats.errors++;
         res.status(500).json({
             success: false,
             error: error.message
@@ -85,84 +127,51 @@ app.post("/start-sudoku", async (req, res) => {
     }
 });
 
-app.post("/submit-phone", async (req, res) => {
-    const { phone } = req.body;
-    
-    if (!waitingForPhone) {
+app.post("/stop-game", (req, res) => {
+    if (!isProcessing) {
         return res.status(400).json({
             success: false,
-            error: "Aucune demande de numéro en cours"
+            error: "Aucun processus en cours"
         });
     }
 
-    if (!phone) {
-        return res.status(400).json({
-            success: false,
-            error: "Numéro de téléphone requis"
-        });
-    }
-
-    phoneNumber = phone;
-    waitingForPhone = false;
+    isProcessing = false;
+    console.log("🛑 Arrêt du bot demandé par l'utilisateur");
     
     res.json({
         success: true,
-        message: "Numéro de téléphone reçu"
-    });
-});
-
-app.post("/submit-otp", async (req, res) => {
-    const { otp } = req.body;
-    
-    if (!waitingForOTP) {
-        return res.status(400).json({
-            success: false,
-            error: "Aucune demande d'OTP en cours"
-        });
-    }
-
-    if (!otp) {
-        return res.status(400).json({
-            success: false,
-            error: "Code OTP requis"
-        });
-    }
-
-    otpCode = otp;
-    waitingForOTP = false;
-    
-    res.json({
-        success: true,
-        message: "Code OTP reçu"
-    });
-});
-
-// Gestion des cookies
-async function saveCookies(page) {
-    try {
-        const cookies = await page.cookies();
-        fs.writeFileSync(path.join(__dirname, COOKIE_FILE), JSON.stringify(cookies, null, 2));
-        console.log('🍪 Cookies sauvegardés');
-    } catch (error) {
-        console.error('Erreur sauvegarde cookies:', error.message);
-    }
-}
-
-async function loadCookies(page) {
-    try {
-        const cookiePath = path.join(__dirname, COOKIE_FILE);
-        if (fs.existsSync(cookiePath)) {
-            const cookies = JSON.parse(fs.readFileSync(cookiePath, 'utf8'));
-            await page.setCookie(...cookies);
-            console.log('🍪 Cookies chargés');
-            return true;
+        message: "Bot arrêté",
+        finalStats: {
+            totalRounds: gameStats.totalRounds,
+            totalPoints: gameStats.totalPoints,
+            errors: gameStats.errors,
+            uptime: Math.floor((Date.now() - gameStats.startTime) / 1000)
         }
-        return false;
-    } catch (error) {
-        console.error('Erreur chargement cookies:', error.message);
-        return false;
+    });
+});
+
+app.post("/config", (req, res) => {
+    const { loginUrl, gameUrl } = req.body;
+    
+    if (isProcessing) {
+        return res.status(400).json({
+            success: false,
+            error: "Impossible de modifier la configuration pendant l'exécution"
+        });
     }
-}
+
+    if (loginUrl) LOGIN_URL = loginUrl;
+    if (gameUrl) GAME_URL = gameUrl;
+    
+    res.json({
+        success: true,
+        message: "Configuration mise à jour",
+        config: {
+            loginUrl: LOGIN_URL,
+            gameUrl: GAME_URL
+        }
+    });
+});
 
 // Fonctions utilitaires
 async function sleep(ms) {
@@ -191,485 +200,269 @@ async function initPage(browser) {
     return page;
 }
 
-// Algorithme de résolution de Sudoku
-function isSafe(board, row, col, num) {
-    // Vérifie la ligne
-    for (let d = 0; d < board.length; d++) {
-        if (board[row][d] === num) {
-            return false;
-        }
-    }
-
-    // Vérifie la colonne
-    for (let r = 0; r < board.length; r++) {
-        if (board[r][col] === num) {
-            return false;
-        }
-    }
-
-    // Vérifie la sous-grille 3x3
-    const sqrt = Math.floor(Math.sqrt(board.length));
-    const boxRowStart = row - row % sqrt;
-    const boxColStart = col - col % sqrt;
-
-    for (let r = boxRowStart; r < boxRowStart + sqrt; r++) {
-        for (let d = boxColStart; d < boxColStart + sqrt; d++) {
-            if (board[r][d] === num) {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
-function solveSudoku(board) {
-    const n = board.length;
-    let row = -1;
-    let col = -1;
-    let isEmpty = true;
-    
-    for (let i = 0; i < n; i++) {
-        for (let j = 0; j < n; j++) {
-            if (board[i][j] === 0) {
-                row = i;
-                col = j;
-                isEmpty = false;
-                break;
-            }
-        }
-        if (!isEmpty) {
-            break;
-        }
-    }
-
-    if (isEmpty) {
-        return true;
-    }
-
-    for (let num = 1; num <= n; num++) {
-        if (isSafe(board, row, col, num)) {
-            board[row][col] = num;
-            if (solveSudoku(board)) {
-                return true;
-            } else {
-                board[row][col] = 0;
-            }
-        }
-    }
-    return false;
-}
-
-function convertTo2D(gridValues) {
-    const board = [];
-    for (let i = 0; i < 9; i++) {
-        board.push(gridValues.slice(i * 9, (i + 1) * 9).map(Number));
-    }
-    return board;
-}
-
-function convertTo1D(board) {
-    return board.flat();
-}
-
-/*async function checkScoreDifference() {
+// Gestion des cookies
+async function saveCookies(page) {
     try {
-        console.log("🔍 Vérification des scores...");
-        await currentPage.goto(BASE_URL, { waitUntil: "networkidle2" });
-        await sleep(3000);
+        const cookies = await page.cookies();
+        fs.writeFileSync(path.join(__dirname, COOKIE_FILE), JSON.stringify(cookies, null, 2));
+        console.log('🍪 Cookies sauvegardés');
+    } catch (error) {
+        console.error('Erreur sauvegarde cookies:', error.message);
+    }
+}
 
-        const lastPlaceScore = await currentPage.evaluate(() => {
-            const leaderboard = document.querySelector('div.mt-6.border.rounded-lg.p-4');
-            if (!leaderboard) return null;
-            
-            const leaderboardItems = leaderboard.querySelectorAll('div.space-y-3 > div');
-            if (leaderboardItems.length === 0) return null;
-            
-            const lastItem = leaderboardItems[leaderboardItems.length - 1];
-            const scoreElement = lastItem.querySelector('span.text-lg.font-bold');
-            return scoreElement ? parseInt(scoreElement.textContent) : null;
-        });
-
-        const myScore = await currentPage.evaluate(() => {
-            const scoreElement = document.querySelector('div.relative.z-10.bg-teal-800\\/70 span.text-white.ml-4');
-            if (!scoreElement) return null;
-            
-            const scoreText = scoreElement.textContent.trim();
-            const scoreNumber = parseInt(scoreText);
-            return isNaN(scoreNumber) ? null : scoreNumber;
-        });
-
-        console.log(`📊 Scores - Moi: ${myScore}, Dernier: ${lastPlaceScore}`);
-
-        if (lastPlaceScore === null || myScore === null) {
-            console.log("⚠ Impossible de récupérer les scores, continuation par défaut");
+async function loadCookies(page) {
+    try {
+        const cookiePath = path.join(__dirname, COOKIE_FILE);
+        if (fs.existsSync(cookiePath)) {
+            const cookies = JSON.parse(fs.readFileSync(cookiePath, 'utf8'));
+            await page.setCookie(...cookies);
+            console.log('🍪 Cookies chargés');
             return true;
         }
-
-        const difference = myScore - lastPlaceScore;
-        console.log(`📈 Différence: ${difference} points`);
-
-        if (difference >= 1500) {
-            console.log(`🛑 Différence de 1500+ points atteinte (${difference}), pause de 3 heures`);
-            await sleep(3 * 60 * 60 * 1000);
-            return await checkScoreDifference();
-        }
-
-        return true;
+        return false;
     } catch (error) {
-        console.error("Erreur lors de la vérification des scores:", error);
-        return true;
+        console.error('Erreur chargement cookies:', error.message);
+        return false;
     }
-}*/
+}
 
-async function handleLogin(cookiesLoaded = false, maxAttempts = 3) {
+// Fonction de connexion
+async function handleLogin(phone, password, maxAttempts = 3) {
     let attempt = 0;
     
     while (attempt < maxAttempts) {
         try {
-            console.log(`\nTentative de connexion ${attempt + 1}/${maxAttempts}`);
-            await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-            await sleep(2000);
+            console.log(`\n🔐 Tentative de connexion ${attempt + 1}/${maxAttempts}`);
             
+            // Aller à la page de connexion
+            await currentPage.goto(LOGIN_URL, { waitUntil: "networkidle2" });
+            await sleep(3000);
+            
+            // Remplir le formulaire de connexion
+            console.log("📱 Saisie du numéro de téléphone...");
+            await currentPage.waitForSelector('#msisdn', { timeout: 30000 });
+            await currentPage.type('#msisdn', phone);
+            await sleep(1000);
+            
+            console.log("🔒 Saisie du mot de passe...");
+            await currentPage.waitForSelector('#password', { timeout: 30000 });
+            await currentPage.type('#password', password);
+            await sleep(1000);
+            
+            // Cliquer sur le bouton de connexion
+            console.log("🚀 Clic sur le bouton LOGIN...");
+            await currentPage.click('#login');
+            
+            // Attendre 10 secondes comme spécifié
+            console.log("⏳ Attente de 10 secondes...");
+            await sleep(10000);
+            
+            // Vérifier si la connexion a réussi
             const currentUrl = currentPage.url();
-            if (!currentUrl.includes(GAME_URL)) {
-                if (cookiesLoaded) {
-                    console.log("Redirection malgré les cookies, ils sont peut-être expirés");
-                    cookiesLoaded = false;
-                }
-                
-                console.log("Redirection détectée, démarrage du processus de connexion...");
-                
-                console.log("Étape 1: Clique sur le bouton Kwinjira");
-                await currentPage.waitForSelector("button.w-53.py-3.px-6.bg-gradient-to-r.from-amber-400.to-amber-500.text-white.text-lg.font-bold.rounded-full.shadow-lg.mt-36", { timeout: 30000 });
-                await currentPage.click("button.w-53.py-3.px-6.bg-gradient-to-r.from-amber-400.to-amber-500.text-white.text-lg.font-bold.rounded-full.shadow-lg.mt-36");
-                await sleep(2000);
-                
-                await currentPage.waitForFunction(() => window.location.href.includes("/login"));
-                
-                console.log("Étape 2: Demande du numéro de téléphone");
-                await currentPage.waitForSelector("input[placeholder='Nimushiremwo inomero ya terefone']", { timeout: 30000 });
-                
-                waitingForPhone = true;
-                phoneNumber = '';
-                console.log("📱 En attente du numéro de téléphone via l'API...");
-                
-                while (waitingForPhone || !phoneNumber) {
-                    await sleep(1000);
-                }
-                
-                await currentPage.type("input[placeholder='Nimushiremwo inomero ya terefone']", phoneNumber);
-                await sleep(1000);
-                
-                await currentPage.click("button.w-full.py-2.bg-red-700.text-white.rounded-md.font-semibold.hover\\:bg-red-600.transition.duration-200");
-                await sleep(2000);
-                
-                console.log("Étape 3: Demande du code OTP");
-                await currentPage.waitForSelector("input[placeholder='OTP']", { timeout: 30000 });
-                
-                waitingForOTP = true;
-                otpCode = '';
-                console.log("🔐 En attente du code OTP via l'API...");
-                
-                while (waitingForOTP || !otpCode) {
-                    await sleep(1000);
-                }
-                
-                await currentPage.type("input[placeholder='OTP']", otpCode);
-                await sleep(1000);
-                
-                await currentPage.click("button.w-full.py-2.bg-red-700.text-white.rounded-md.font-semibold.hover\\:bg-red-800.transition.duration-200");
-                console.log("Attente de 10 secondes...");
-                await sleep(10000);
-                
-                console.log("Navigation vers la page de jeu...");
-                await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-                await sleep(3000);
-                
-                if (!currentPage.url().includes(GAME_URL)) {
-                    console.log("La connexion a échoué, nouvelle tentative...");
-                    attempt++;
-                    continue;
-                }
-                
-                console.log("Connexion réussie!");
+            if (!currentUrl.includes('/Login')) {
+                console.log("✅ Connexion réussie!");
+                await saveCookies(currentPage);
                 return true;
             }
             
-            console.log("Déjà connecté, poursuite du script...");
-            return true;
+            console.log("❌ Connexion échouée, nouvelle tentative...");
+            attempt++;
+            await sleep(5000);
             
         } catch (error) {
-            console.log(`Erreur lors de la tentative de connexion: ${error.message}`);
+            console.log(`❌ Erreur lors de la tentative de connexion: ${error.message}`);
             attempt++;
             await sleep(5000);
         }
     }
     
-    console.log(`Échec après ${maxAttempts} tentatives de connexion`);
+    console.log(`❌ Échec après ${maxAttempts} tentatives de connexion`);
     return false;
 }
 
-async function getSudokuGrid() {
+// Fonction pour récupérer et envoyer le score
+async function playGameRound() {
     try {
-        // Vérifier d'abord si la page est toujours responsive
-        try {
-            await currentPage.waitForFunction(() => document.readyState === 'complete', { timeout: 5000 });
-        } catch (e) {
-            console.log("⚠ La page ne répond pas, tentative de rafraîchissement...");
-            /*await currentPage.reload({ waitUntil: "networkidle2" });
-            await sleep(3000);*/
-            await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-            await sleep(3000);
-        }
-
-        // Attendre le sélecteur avec un timeout raisonnable
-        await currentPage.waitForSelector("div.grid.grid-cols-9.gap-0.border-4.border-black", { 
-            timeout: 20000,
-            visible: true
+        console.log("🎮 Navigation vers la page de jeu...");
+        await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
+        await sleep(5000);
+        
+        // Récupérer le score maximum
+        console.log("🔍 Recherche du score maximum...");
+        const maxScore = await currentPage.evaluate(() => {
+            const maxScoreElement = document.querySelector('#maxS');
+            return maxScoreElement ? parseInt(maxScoreElement.value) : null;
         });
         
-        const gridValues = await currentPage.evaluate(() => {
-            const cells = document.querySelectorAll("div.grid.grid-cols-9.gap-0.border-4.border-black div.w-10.h-10");
-            return Array.from(cells).map(cell => cell.textContent.trim());
-        });
-        
-        if (gridValues.length === 81) {
-            return gridValues;
+        if (!maxScore) {
+            throw new Error("Impossible de récupérer le score maximum");
         }
         
-        console.log("Grille incomplète trouvée (", gridValues.length, "éléments)");
-        return null;
-    } catch (error) {
-        console.error(`Erreur récupération grille: ${error.message}`);
-        return null;
-    }
-}
-
-async function fillSolution(solvedValues) {
-    try {
-        const cells = await currentPage.$$("div.grid.grid-cols-9.gap-0.border-4.border-black div.w-10.h-10");
-        const numberButtons = await currentPage.$$("div.flex.gap-2.mt-4 button");
+        console.log(`🎯 Score maximum trouvé: ${maxScore}`);
         
-        for (let i = 0; i < Math.min(cells.length, 81); i++) {
-            const currentValue = await cells[i].evaluate(el => el.textContent.trim());
-            const targetValue = solvedValues[i].toString();
-            
-            if (currentValue === targetValue) continue;
-            
-            if (!currentValue && targetValue) {
-                for (let attempt = 0; attempt < 3; attempt++) {
-                    try {
-                        const currentVal = await cells[i].evaluate(el => el.textContent.trim());
-                        if (currentVal === targetValue) break;
-                        
-                        if (!currentVal) {
-                            await cells[i].click();
-                            await sleep(300);
-                            
-                            const isSelected = await cells[i].evaluate(el => 
-                                el.className.includes("bg-blue-200")
-                            );
-                            
-                            if (isSelected && numberButtons[parseInt(targetValue) - 1]) {
-                                await numberButtons[parseInt(targetValue) - 1].click();
-                                await sleep(500);
-                                
-                                const newValue = await cells[i].evaluate(el => el.textContent.trim());
-                                if (newValue === targetValue) break;
-                                
-                                console.log(`⚠ Réessai case ${i} (valeur non prise)`);
-                                await sleep(1000);
+        // Exécuter le script de soumission de score
+        console.log("📤 Envoi du score...");
+        const result = await currentPage.evaluate(async (score) => {
+            try {
+                // Récupérer l'ID du joueur
+                const _player = document.getElementById("player").value;
+                console.log(`👤 Player ID: ${_player}`);
+                
+                // Créer la clé HMAC avec l'ID du joueur
+                const encoder = new TextEncoder();
+                const keyData = encoder.encode(_player);
+                
+                const cryptoKey = await crypto.subtle.importKey(
+                    "raw",
+                    keyData,
+                    { name: "HMAC", hash: "SHA-256" },
+                    false,
+                    ["sign"]
+                );
+                
+                // Créer le message à signer (score entouré d'espaces)
+                const data = encoder.encode(" " + score + " ");
+                
+                // Générer la signature HMAC
+                const signature = await crypto.subtle.sign("HMAC", cryptoKey, data);
+                
+                // Convertir en hexadécimal
+                const hex = [...new Uint8Array(signature)]
+                    .map(b => b.toString(16).padStart(2, '0'))
+                    .join('');
+                
+                console.log(`🔐 Code HMAC: ${hex}`);
+                
+                // Récupérer le token CSRF
+                const csrfToken = document.querySelector("input[name=__RequestVerificationToken]").value;
+                console.log(`🔑 Token CSRF: ${csrfToken}`);
+                
+                // Envoyer la requête POST
+                return new Promise((resolve, reject) => {
+                    if (typeof jQuery !== 'undefined') {
+                        jQuery.ajax({
+                            type: "POST",
+                            url: "/Game/AddCoins",
+                            headers: {
+                                RequestVerificationToken: csrfToken,
+                                Accept: "application/json",
+                            },
+                            data: {
+                                playGameCoins: score,
+                                code: hex
+                            },
+                            success: function (data) {
+                                console.log(`✅ Score ${score} envoyé avec succès!`);
+                                resolve({ success: true, score, data });
+                            },
+                            error: function (xhr, status, error) {
+                                console.error(`❌ Erreur envoi score ${score}:`, error);
+                                reject(new Error(`Erreur AJAX: ${error}`));
                             }
-                        }
-                    } catch (error) {
-                        console.log(`Erreur case ${i}: ${error.message.substring(0, 50)}`);
-                        await sleep(1000);
+                        });
+                    } else {
+                        // Fallback avec fetch si jQuery n'est pas disponible
+                        fetch("/Game/AddCoins", {
+                            method: "POST",
+                            headers: {
+                                "RequestVerificationToken": csrfToken,
+                                "Accept": "application/json",
+                                "Content-Type": "application/x-www-form-urlencoded"
+                            },
+                            body: `playGameCoins=${score}&code=${hex}`
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log(`✅ Score ${score} envoyé avec succès!`);
+                            resolve({ success: true, score, data });
+                        })
+                        .catch(error => {
+                            console.error(`❌ Erreur envoi score ${score}:`, error);
+                            reject(error);
+                        });
                     }
-                }
+                });
+                
+            } catch (error) {
+                console.error(`❌ Erreur lors de l'envoi du score ${score}:`, error);
+                throw error;
             }
-        }
-        return true;
-    } catch (error) {
-        console.error(`Erreur remplissage: ${error.message}`);
-        return false;
-    }
-}
-
-async function solveOneSudoku(roundNumber) {
-    console.log(`\n${'='.repeat(50)}`);
-    console.log(`🎯 ROUND ${roundNumber}`);
-    console.log(`${'='.repeat(50)}`);
-    
-    try {
-        console.log("Étape 1: Chargement de la grille");
-        await currentPage.bringToFront();
+        }, maxScore);
         
-        // Tentative de récupération de la grille avec rafraîchissement si échec
-        let gridValues = await getSudokuGrid();
-        if (!gridValues) {
-            console.log("🔄 Rafraîchissement de la page...");
-            /*await currentPage.reload({ waitUntil: "networkidle2" });
-            await sleep(3000);*/
-            await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-            await sleep(3000);
-            gridValues = await getSudokuGrid();
-            if (!gridValues) return false;
-        }
-        
-        // Convertir les valeurs de la grille en nombres (0 pour les cases vides)
-        const numericGrid = gridValues.map(val => val === '' ? 0 : parseInt(val));
-        
-        console.log("\nÉtape 2: Résolution du Sudoku");
-        const board = convertTo2D(numericGrid);
-        const isSolved = solveSudoku(board);
-        
-        if (!isSolved) {
-            console.log("❌ Impossible de résoudre cette grille");
-            return false;
-        }
-        
-        const solvedValues = convertTo1D(board);
-        console.log(`✅ Solution obtenue: ${solvedValues.filter(v => v !== 0).length}/81 cases`);
-        
-        console.log("\nÉtape 3: Remplissage de la solution");
-        const stillThere = await getSudokuGrid();
-        if (!stillThere) {
-            console.log("Rechargement de la page...");
-            /*await currentPage.reload({ waitUntil: "networkidle2" });
-            await sleep(3000);*/
-            await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-            await sleep(3000);
-            if (!await getSudokuGrid()) return false;
-        }
-        
-        const success = await fillSolution(solvedValues);
-        if (!success) return false;
-        
-        console.log("\nÉtape 4: Chargement d'un nouveau Sudoku");
-        try {
-            await currentPage.click("button.py-2.px-4.bg-red-800.text-white.rounded-full.ml-5");
-            await sleep(4000);
-            console.log("Nouvelle grille chargée avec succès!");
+        if (result.success) {
+            gameStats.totalPoints += maxScore;
+            console.log(`✅ Round réussi! Score ajouté: ${maxScore}`);
             return true;
-        } catch (error) {
-            console.log("Échec du chargement d'une nouvelle grille - rafraîchissement...");
-            await currentPage.reload({ waitUntil: "networkidle2" });
-            await sleep(3000);
-            return false;
         }
         
+        return false;
+        
     } catch (error) {
-        console.error(`Erreur dans la résolution: ${error.message}`);
+        console.error(`❌ Erreur dans le round de jeu: ${error.message}`);
+        gameStats.errors++;
         return false;
     }
 }
 
-async function resetBrowser() {
+// Processus principal du bot
+async function startGameBot(phone, password, maxRounds) {
     try {
-        if (currentBrowser) {
-            // Sauvegarder les cookies avant de fermer le navigateur
-            if (currentPage) {
-                console.log("💾 Sauvegarde des cookies avant réinitialisation...");
-                await saveCookies(currentPage);
-            }
-            await currentBrowser.close();
-        }
+        console.log("🤖 === DÉMARRAGE DU BOT SWEETY GAME ===");
+        console.log(`📞 Téléphone: ${phone.substring(0, 3)}****`);
+        console.log(`🎯 Nombre de rounds: ${maxRounds}`);
         
+        // Initialiser le navigateur
         currentBrowser = await initBrowser();
         currentPage = await initPage(currentBrowser);
+        
+        // Charger les cookies existants
         await loadCookies(currentPage);
-    } catch (error) {
-        console.error("Erreur lors de la réinitialisation:", error);
-    }
-}
-
-async function solveSudokuProcess() {
-    try {
-        console.log("=== Démarrage du solveur Sudoku ===");
         
-        currentBrowser = await initBrowser();
-        currentPage = await initPage(currentBrowser);
-
-        const cookiesLoaded = await loadCookies(currentPage);
-        
-        let loginSuccess = false;
-        while (!loginSuccess) {
-            loginSuccess = await handleLogin(cookiesLoaded);
-            if (!loginSuccess) {
-                console.log("Nouvelle tentative de connexion dans 10 secondes...");
-                await sleep(10000);
-                await currentPage.reload();
-            }
+        // Se connecter
+        const loginSuccess = await handleLogin(phone, password);
+        if (!loginSuccess) {
+            throw new Error("Impossible de se connecter");
         }
-
-        await saveCookies(currentPage);
-
-        let roundNumber = 1;
-        const maxRetries = 3;
-
-        while (true) {
-            if (solvedCount >= MAX_SOLVED_PER_SESSION) {
-                /*const shouldContinue = await checkScoreDifference();
-                await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-                await sleep(3000);*/
-
-                await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-                await sleep(3000);
-                
-                solvedCount = 0;
-                roundNumber = 1;
-                continue;
-            }
-
-            let retries = 0;
-            let success = false;
-
-            while (!success && retries < maxRetries) {
-                success = await solveOneSudoku(roundNumber);
-                if (!success) {
-                    retries++;
-                    console.log(`🔄 Tentative ${retries}/${maxRetries}`);
-                    
-                    // Rafraîchir la page avant de réessayer
-                    console.log("🔄 Rafraîchissement de la page principale...");
-                    /*await currentPage.reload({ waitUntil: "networkidle2" });
-                    await sleep(3000);*/
-                    await resetBrowser();
-                    await handleLogin(false);
-                    await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-                    await sleep(3000);
-                }
-            }
-
-            if (success) {
-                roundNumber++;
-                solvedCount++;
-                console.log(`✅ Sudoku résolus ce cycle: ${solvedCount}/${MAX_SOLVED_PER_SESSION}`);
+        
+        // Boucle de jeu
+        while (isProcessing && gameStats.currentRound < maxRounds) {
+            gameStats.currentRound++;
+            
+            console.log(`\n🎮 === ROUND ${gameStats.currentRound}/${maxRounds} ===`);
+            
+            const roundSuccess = await playGameRound();
+            
+            if (roundSuccess) {
+                gameStats.totalRounds++;
+                console.log(`✅ Round ${gameStats.currentRound} terminé avec succès!`);
+                console.log(`📊 Points total: ${gameStats.totalPoints}`);
             } else {
-                console.log("🔁 Réinitialisation complète");
-                await resetBrowser();
-                solvedCount = 0;
-                
-                let reconnectSuccess = false;
-                while (!reconnectSuccess) {
-                    reconnectSuccess = await handleLogin(false);
-                    if (!reconnectSuccess) {
-                        console.log("Nouvelle tentative de connexion dans 10 secondes...");
-                        await sleep(10000);
-                        await currentPage.reload();
-                    }
-                }
-
-                await saveCookies(currentPage);
-                await sleep(2000);
+                console.log(`❌ Échec du round ${gameStats.currentRound}`);
+                gameStats.errors++;
+            }
+            
+            // Pause entre les rounds (sauf pour le dernier)
+            if (gameStats.currentRound < maxRounds && isProcessing) {
+                console.log("⏳ Pause de 3 secondes avant le prochain round...");
+                await sleep(3000);
             }
         }
+        
+        console.log("\n🏁 === JEU TERMINÉ ===");
+        console.log(`📊 Statistiques finales:`);
+        console.log(`   - Rounds réussis: ${gameStats.totalRounds}/${maxRounds}`);
+        console.log(`   - Points total: ${gameStats.totalPoints}`);
+        console.log(`   - Erreurs: ${gameStats.errors}`);
+        
     } catch (error) {
-        console.error('❌ Erreur:', error);
+        console.error('❌ Erreur dans le processus principal:', error);
+        gameStats.errors++;
     } finally {
         if (currentBrowser) {
             await currentBrowser.close();
+            currentBrowser = null;
+            currentPage = null;
         }
         isProcessing = false;
         console.log('👋 Processus terminé');
@@ -679,18 +472,34 @@ async function solveSudokuProcess() {
 // Gestion de l'arrêt propre
 process.on('SIGINT', async () => {
     console.log('\n🛑 Arrêt par utilisateur');
+    isProcessing = false;
     if (currentBrowser) {
         await currentBrowser.close();
     }
     process.exit(0);
 });
 
+process.on('SIGTERM', async () => {
+    console.log('\n🛑 Arrêt par SIGTERM');
+    isProcessing = false;
+    if (currentBrowser) {
+        await currentBrowser.close();
+    }
+    process.exit(0);
+});
+
+// Démarrage du serveur
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Sudoku Solver API running on port ${PORT}`);
+    console.log(`🚀 Sweety Game Bot API running on port ${PORT}`);
     console.log(`📱 Endpoints disponibles:`);
-    console.log(`   POST /start-sudoku - Démarre le processus`);
-    console.log(`   POST /submit-phone - Soumet le numéro (body: {phone: "123456789"})`);
-    console.log(`   POST /submit-otp - Soumet l'OTP (body: {otp: "123456"})`);
-    console.log(`   GET /status - Vérifie le statut`);
+    console.log(`   POST /start-game - Démarre le bot (body: {phone, password, rounds})`);
+    console.log(`   POST /stop-game - Arrête le bot`);
+    console.log(`   POST /config - Configure les URLs (body: {loginUrl, gameUrl})`);
+    console.log(`   GET /status - Statut du bot`);
+    console.log(`   GET /stats - Statistiques détaillées`);
+    console.log(`\n💡 Usage:`);
+    console.log(`   1. POST /start-game avec phone, password et rounds`);
+    console.log(`   2. Le bot se connectera et jouera automatiquement`);
+    console.log(`   3. Utilisez /stats pour suivre les progrès`);
 });
