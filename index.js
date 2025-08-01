@@ -286,7 +286,7 @@ async function playGameRound() {
     try {
         console.log("🎮 Navigation vers la page de jeu...");
         await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-        await sleep(5000);
+        await sleep(1000 * 30);
         
         // Récupérer le score maximum
         console.log("🔍 Recherche du score maximum...");
