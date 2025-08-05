@@ -10,21 +10,25 @@ dotenv.config();
 
 const app = express();
 
-// Configuration CORS
+// Configuration CORS corrigée
 const corsOptions = {
-  origin: '*', // À remplacer par votre domaine en production
+  origin: '*', // Autorise tout en développement
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  allowedHeaders: ['Content-Type', 'Authorization']
 };
 
-// Middlewares
+// Middlewares corrigés
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Middleware pour gérer les pré-vols OPTIONS
-app.options('*', cors(corsOptions));
+// Middleware OPTIONS corrigé
+app.options('*', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', corsOptions.origin);
+  res.setHeader('Access-Control-Allow-Methods', corsOptions.methods.join(','));
+  res.setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders.join(','));
+  res.sendStatus(200);
+});
 
 // Configuration par défaut
 const COOKIE_FILE = 'cookies.json';
