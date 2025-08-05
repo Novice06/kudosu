@@ -4,31 +4,32 @@ import * as dotenv from "dotenv";
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import cors from 'cors';
 
 dotenv.config();
 
 const app = express();
 
-// Configuration CORS corrigée
-const corsOptions = {
-  origin: '*', // Autorise tout en développement
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-};
-
-// Middlewares corrigés
-app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Middleware OPTIONS corrigé
-app.options('*', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', corsOptions.origin);
-  res.setHeader('Access-Control-Allow-Methods', corsOptions.methods.join(','));
-  res.setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders.join(','));
-  res.sendStatus(200);
+// Configuration CORS complète
+app.use((req, res, next) => {
+    // Permettre toutes les origines (vous pouvez restreindre à des domaines spécifiques)
+    res.header('Access-Control-Allow-Origin', '*');
+    
+    // Permettre les méthodes HTTP
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    
+    // Permettre les en-têtes spécifiques
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma');
+    
+    // Gérer les requêtes preflight OPTIONS
+    if (req.method === 'OPTIONS') {
+        res.status(200).send();
+        return;
+    }
+    
+    next();
 });
+
+app.use(express.json());
 
 // Configuration par défaut
 const COOKIE_FILE = 'cookies.json';
