@@ -4,11 +4,27 @@ import * as dotenv from "dotenv";
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import cors from 'cors';
 
 dotenv.config();
 
 const app = express();
+
+// Configuration CORS
+const corsOptions = {
+  origin: '*', // À remplacer par votre domaine en production
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+};
+
+// Middlewares
+app.use(cors(corsOptions));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Middleware pour gérer les pré-vols OPTIONS
+app.options('*', cors(corsOptions));
 
 // Configuration par défaut
 const COOKIE_FILE = 'cookies.json';
