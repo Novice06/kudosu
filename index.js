@@ -307,7 +307,7 @@ async function playGameRound() {
     try {
         console.log("🎮 Navigation vers la page de jeu...");
         await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-        await sleep(5000);
+        await sleep(1000 * 40);
         
         // Récupérer le score maximum
         console.log("🔍 Recherche du score maximum...");
@@ -465,8 +465,8 @@ async function startGameBot(phone, password, maxRounds) {
             
             // Pause entre les rounds (sauf pour le dernier)
             if (gameStats.currentRound < maxRounds && isProcessing) {
-                console.log("⏳ Pause de 3 secondes avant le prochain round...");
-                await sleep(3000);
+                console.log("⏳ Pause de 7 secondes avant le prochain round...");
+                await sleep(7000);
             }
         }
         
