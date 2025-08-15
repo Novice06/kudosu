@@ -431,6 +431,19 @@ async function playGameRound() {
     }
 }
 
+async function resetBrowser() {
+    try {
+        if (currentBrowser) {
+            await currentBrowser.close();
+        }
+        
+        currentBrowser = await initBrowser();
+        currentPage = await initPage(currentBrowser);
+    } catch (error) {
+        console.error("Erreur lors de la réinitialisation:", error);
+    }
+}
+
 // Processus principal du bot
 async function startGameBot(phone, password, maxRounds) {
     try {
@@ -465,6 +478,7 @@ async function startGameBot(phone, password, maxRounds) {
                 console.log(`📊 Points total: ${gameStats.totalPoints}`);
             } else {
                 console.log(`❌ Échec du round ${gameStats.currentRound} Reconnexion...`);
+                await resetBrowser();
                 let loginSuccess = await handleLogin(phone, password);
                 if (!loginSuccess) {
                     gameStats.errors++;
