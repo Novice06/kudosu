@@ -184,6 +184,12 @@ app.post("/config", (req, res) => {
     if (loginUrl) LOGIN_URL = loginUrl;
     if (gameUrl) GAME_URL = gameUrl;
     
+    gameStats.totalRounds = 0;
+    gameStats.totalPoints = 0;
+    gameStats.errors = 0;
+    gameStats.startTime = null;
+    gameStats.currentRound = 0;
+    
     res.json({
         success: true,
         message: "Configuration mise à jour",
@@ -421,7 +427,6 @@ async function playGameRound() {
         
     } catch (error) {
         console.error(`❌ Erreur dans le round de jeu: ${error.message}`);
-        gameStats.errors++;
         return false;
     }
 }
@@ -459,8 +464,14 @@ async function startGameBot(phone, password, maxRounds) {
                 console.log(`✅ Round ${gameStats.currentRound} terminé avec succès!`);
                 console.log(`📊 Points total: ${gameStats.totalPoints}`);
             } else {
-                console.log(`❌ Échec du round ${gameStats.currentRound}`);
-                gameStats.errors++;
+                console.log(`❌ Échec du round ${gameStats.currentRound} Reconnexion...`);
+                let loginSuccess = await handleLogin(phone, password);
+                if (!loginSuccess) {
+                    gameStats.errors++;
+                    throw new Error("Impossible de se connecter");
+                }
+                gameStats.currentRound--;
+                continue;
             }
             
             // Pause entre les rounds (sauf pour le dernier)
