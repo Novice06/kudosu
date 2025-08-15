@@ -313,7 +313,7 @@ async function playGameRound() {
     try {
         console.log("🎮 Navigation vers la page de jeu...");
         await currentPage.goto(GAME_URL, { waitUntil: "networkidle2" });
-        await sleep(1000 * 40);
+        await sleep(1000);
         
         // Récupérer le score maximum
         console.log("🔍 Recherche du score maximum...");
@@ -327,6 +327,9 @@ async function playGameRound() {
         }
         
         console.log(`🎯 Score maximum trouvé: ${maxScore}`);
+
+        // attente de 40 seconde obligatoire
+        await sleep(1000 * 40);
         
         // Exécuter le script de soumission de score
         console.log("📤 Envoi du score...");
