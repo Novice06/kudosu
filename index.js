@@ -434,16 +434,45 @@ async function playGameRound() {
     }
 }
 
+// Fonction améliorée de réinitialisation du navigateur
 async function resetBrowser() {
     try {
-        if (currentBrowser) {
-            await currentBrowser.close();
+        console.log("🔄 Réinitialisation du navigateur...");
+        
+        // Fermer proprement l'ancien navigateur
+        if (currentPage) {
+            try {
+                await currentPage.close();
+            } catch (error) {
+                console.log("⚠️ Erreur lors de la fermeture de la page:", error.message);
+            }
+            currentPage = null;
         }
         
+        if (currentBrowser) {
+            try {
+                await currentBrowser.close();
+            } catch (error) {
+                console.log("⚠️ Erreur lors de la fermeture du navigateur:", error.message);
+            }
+            currentBrowser = null;
+        }
+        
+        // Attendre un peu avant de recréer
+        await sleep(2000);
+        
+        // Créer un nouveau navigateur
         currentBrowser = await initBrowser();
         currentPage = await initPage(currentBrowser);
+        
+        console.log("✅ Navigateur réinitialisé avec succès");
+        return true;
+        
     } catch (error) {
-        console.error("Erreur lors de la réinitialisation:", error);
+        console.error("❌ Erreur lors de la réinitialisation:", error);
+        currentBrowser = null;
+        currentPage = null;
+        return false;
     }
 }
 
@@ -481,12 +510,18 @@ async function startGameBot(phone, password, maxRounds) {
                 console.log(`📊 Points total: ${gameStats.totalPoints}`);
             } else {
                 console.log(`❌ Échec du round ${gameStats.currentRound} Reconnexion...`);
-                await resetBrowser();
+                let resetB = await resetBrowser();
+                if (!resetB) {
+                    gameStats.errors++;
+                    throw new Error("Impossible de reinitialiser le navigateur");
+                }
+                
                 let loginSuccess = await handleLogin(phone, password);
                 if (!loginSuccess) {
                     gameStats.errors++;
                     throw new Error("Impossible de se connecter");
                 }
+                
                 gameStats.currentRound--;
                 continue;
             }
