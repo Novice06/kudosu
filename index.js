@@ -308,7 +308,7 @@ async function handleLogin(phone, password, maxAttempts = 3) {
     return false;
 }
 
-// Fonction pour récupérer et envoyer le score
+// Fonction pour récupérer et envoyer le score - VERSION CORRIGÉE
 async function playGameRound() {
     try {
         console.log("🎮 Navigation vers la page de jeu...");
@@ -331,46 +331,56 @@ async function playGameRound() {
         // attente de 40 seconde obligatoire
         await sleep(1000 * 40);
         
-        // Exécuter le script de soumission de score
-        console.log("📤 Envoi du score...");
+        // Exécuter le script de soumission de score AVEC CJFS
+        console.log("📤 Envoi du score avec la classe Cjfs...");
         const result = await currentPage.evaluate(async (score) => {
             try {
-                // Récupérer l'ID du joueur
-                const _player = document.getElementById("player").value;
+                console.log(`🎯 Préparation envoi du score: ${score}`);
+                
+                // 1. Vérifier que la classe Cjfs existe
+                if (typeof Cjfs === 'undefined') {
+                    throw new Error("Classe Cjfs non trouvée sur cette page");
+                }
+                
+                console.log("✅ Classe Cjfs trouvée");
+                
+                // 2. Récupérer l'ID du joueur
+                const playerElement = document.getElementById("player");
+                if (!playerElement) {
+                    throw new Error("Element 'player' non trouvé");
+                }
+                
+                const _player = playerElement.value;
                 console.log(`👤 Player ID: ${_player}`);
                 
-                // Créer la clé HMAC avec l'ID du joueur
-                const encoder = new TextEncoder();
-                const keyData = encoder.encode(_player);
+                // 3. Utiliser la classe Cjfs pour générer le code HMAC
+                const cjfs = new Cjfs();
+                console.log(`📊 AlgoId: ${cjfs.algoId}`);
                 
-                const cryptoKey = await crypto.subtle.importKey(
-                    "raw",
-                    keyData,
-                    { name: "HMAC", hash: "SHA-256" },
-                    false,
-                    ["sign"]
-                );
+                const hex = await cjfs.endcode(score);
+                console.log(`🔐 Code HMAC généré avec Cjfs: ${hex}`);
                 
-                // Créer le message à signer (score entouré d'espaces)
-                const data = encoder.encode(" " + score + " ");
+                // 4. Récupérer le token CSRF
+                const csrfTokenElement = document.querySelector("input[name=__RequestVerificationToken]");
+                if (!csrfTokenElement) {
+                    throw new Error("Token CSRF non trouvé");
+                }
                 
-                // Générer la signature HMAC
-                const signature = await crypto.subtle.sign("HMAC", cryptoKey, data);
+                const csrfToken = csrfTokenElement.value;
+                console.log(`🔑 Token CSRF: ${csrfToken.substring(0, 20)}...`);
                 
-                // Convertir en hexadécimal
-                const hex = [...new Uint8Array(signature)]
-                    .map(b => b.toString(16).padStart(2, '0'))
-                    .join('');
+                // 5. Préparer les données exactement comme le jeu
+                const requestData = {
+                    playGameCoins: score,
+                    code: hex
+                };
                 
-                console.log(`🔐 Code HMAC: ${hex}`);
+                console.log("📦 Données à envoyer:", requestData);
                 
-                // Récupérer le token CSRF
-                const csrfToken = document.querySelector("input[name=__RequestVerificationToken]").value;
-                console.log(`🔑 Token CSRF: ${csrfToken}`);
-                
-                // Envoyer la requête POST
+                // 6. Envoyer la requête POST exactement comme le jeu original
                 return new Promise((resolve, reject) => {
-                    if (typeof jQuery !== 'undefined') {
+                    if (typeof jQuery !== 'undefined' && jQuery.ajax) {
+                        console.log("📡 Envoi avec jQuery.ajax...");
                         jQuery.ajax({
                             type: "POST",
                             url: "/Game/AddCoins",
@@ -378,55 +388,170 @@ async function playGameRound() {
                                 RequestVerificationToken: csrfToken,
                                 Accept: "application/json",
                             },
-                            data: {
-                                playGameCoins: score,
-                                code: hex
-                            },
+                            data: requestData,
                             success: function (data) {
-                                console.log(`✅ Score ${score} envoyé avec succès!`);
-                                resolve({ success: true, score, data });
+                                console.log(`🎉 SUCCÈS! Score ${score} envoyé avec Cjfs!`);
+                                console.log("✅ Réponse serveur:", data);
+                                console.log("📊 Type réponse:", typeof data);
+                                resolve({ 
+                                    success: true, 
+                                    score, 
+                                    data,
+                                    method: 'jquery',
+                                    cjfsUsed: true 
+                                });
                             },
                             error: function (xhr, status, error) {
-                                console.error(`❌ Erreur envoi score ${score}:`, error);
-                                reject(new Error(`Erreur AJAX: ${error}`));
+                                console.error(`❌ Erreur jQuery envoi score ${score}:`);
+                                console.error("📊 Status:", xhr.status);
+                                console.error("📝 Response:", xhr.responseText);
+                                console.error("⚠️ Error:", error);
+                                
+                                resolve({ 
+                                    success: false, 
+                                    score,
+                                    error: {
+                                        status: xhr.status,
+                                        statusText: status,
+                                        responseText: xhr.responseText,
+                                        error: error
+                                    },
+                                    method: 'jquery',
+                                    cjfsUsed: true
+                                });
+                            }
+                        });
+                    } else if (typeof $ !== 'undefined' && $.ajax) {
+                        console.log("📡 Envoi avec $.ajax...");
+                        $.ajax({
+                            type: "POST",
+                            url: "/Game/AddCoins",
+                            headers: {
+                                RequestVerificationToken: csrfToken,
+                                Accept: "application/json",
+                            },
+                            data: requestData,
+                            success: function (data) {
+                                console.log(`🎉 SUCCÈS! Score ${score} envoyé avec Cjfs!`);
+                                console.log("✅ Réponse serveur:", data);
+                                resolve({ 
+                                    success: true, 
+                                    score, 
+                                    data,
+                                    method: 'dollar-ajax',
+                                    cjfsUsed: true 
+                                });
+                            },
+                            error: function (xhr, status, error) {
+                                console.error(`❌ Erreur $ envoi score ${score}:`);
+                                console.error("📊 Status:", xhr.status);
+                                console.error("📝 Response:", xhr.responseText);
+                                
+                                resolve({ 
+                                    success: false, 
+                                    score,
+                                    error: {
+                                        status: xhr.status,
+                                        statusText: status,
+                                        responseText: xhr.responseText,
+                                        error: error
+                                    },
+                                    method: 'dollar-ajax',
+                                    cjfsUsed: true
+                                });
                             }
                         });
                     } else {
                         // Fallback avec fetch si jQuery n'est pas disponible
+                        console.log("📡 Envoi avec fetch (fallback)...");
                         fetch("/Game/AddCoins", {
                             method: "POST",
                             headers: {
                                 "RequestVerificationToken": csrfToken,
                                 "Accept": "application/json",
-                                "Content-Type": "application/x-www-form-urlencoded"
+                                "Content-Type": "application/x-www-form-urlencoded",
+                                "X-Requested-With": "XMLHttpRequest"
                             },
                             body: `playGameCoins=${score}&code=${hex}`
                         })
-                        .then(response => response.json())
-                        .then(data => {
-                            console.log(`✅ Score ${score} envoyé avec succès!`);
-                            resolve({ success: true, score, data });
+                        .then(async response => {
+                            console.log(`📊 Fetch Response Status: ${response.status}`);
+                            
+                            const responseText = await response.text();
+                            console.log(`📝 Fetch Response Text:`, responseText);
+                            
+                            let data;
+                            try {
+                                data = JSON.parse(responseText);
+                            } catch {
+                                data = responseText;
+                            }
+                            
+                            if (response.ok) {
+                                console.log(`🎉 SUCCÈS Fetch! Score ${score} envoyé avec Cjfs!`);
+                                resolve({ 
+                                    success: true, 
+                                    score, 
+                                    data,
+                                    method: 'fetch',
+                                    cjfsUsed: true 
+                                });
+                            } else {
+                                console.error(`❌ Erreur Fetch envoi score ${score}`);
+                                resolve({ 
+                                    success: false, 
+                                    score,
+                                    error: {
+                                        status: response.status,
+                                        statusText: response.statusText,
+                                        responseText: responseText
+                                    },
+                                    method: 'fetch',
+                                    cjfsUsed: true
+                                });
+                            }
                         })
                         .catch(error => {
-                            console.error(`❌ Erreur envoi score ${score}:`, error);
-                            reject(error);
+                            console.error(`❌ Erreur Fetch catch:`, error);
+                            resolve({ 
+                                success: false, 
+                                score,
+                                error: error.message,
+                                method: 'fetch',
+                                cjfsUsed: true
+                            });
                         });
                     }
                 });
                 
             } catch (error) {
-                console.error(`❌ Erreur lors de l'envoi du score ${score}:`, error);
-                throw error;
+                console.error(`❌ Erreur générale lors de l'envoi du score ${score}:`, error);
+                return { 
+                    success: false, 
+                    score,
+                    error: error.message,
+                    cjfsUsed: false
+                };
             }
         }, maxScore);
+        
+        // Analyser le résultat détaillé
+        console.log("🔍 Résultat détaillé de l'envoi:", result);
         
         if (result.success) {
             gameStats.totalPoints += maxScore;
             console.log(`✅ Round réussi! Score ajouté: ${maxScore}`);
+            console.log(`🔧 Méthode utilisée: ${result.method}`);
+            console.log(`🧮 Cjfs utilisé: ${result.cjfsUsed}`);
+            console.log(`📊 Réponse serveur:`, result.data);
             return true;
+        } else {
+            console.error(`❌ Round échoué pour le score ${maxScore}`);
+            console.error(`🔧 Méthode tentée: ${result.method}`);
+            console.error(`🧮 Cjfs utilisé: ${result.cjfsUsed}`);
+            console.error(`⚠️ Détails erreur:`, result.error);
+            return false;
         }
-        
-        return false;
         
     } catch (error) {
         console.error(`❌ Erreur dans le round de jeu: ${error.message}`);
